@@ -272,8 +272,11 @@ async function loadSupabaseData() {
     }
 
     const { data: testiRows, error: testiError } = await db
-      .from("testimoni").select("nama,peran,rating,isi")
-      .order("created_at", { ascending: false }).limit(6);
+  .from("testimoni")
+  .select("nama,peran,rating,isi")
+  .eq("status", "Tampil")
+  .order("created_at", { ascending: false })
+  .limit(6);
     if (!testiError && testiRows) renderTestimonials(testiRows);
   } catch (err) {
     console.error("Gagal memuat data dari Supabase:", err);
