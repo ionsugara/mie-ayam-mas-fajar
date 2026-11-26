@@ -2,8 +2,15 @@
 //  Mie Ayam Kartotiyasan Mas Fajar — script.js
 // ============================================================
 
+// ── Supabase ───────────────────────────────────────────────
+// Kunci publishable aman ditaruh di sini karena akses dijaga Row Level Security.
+const SUPABASE_URL = "https://vaupynrxlcbynzgleeph.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_uOfT4jN5oRYiekB7_BrkNw_V5YojbyS";
+const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const PLACEHOLDER_IMG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='600'><rect width='100%' height='100%' fill='%23e9dfd2'/></svg>";
+
 // ── Menu Data ──────────────────────────────────────────────
-const menuItems = [
+let menuItems = [
   { cat: "andalan", name: "Mie Ayam Original", desc: "Mie kenyal dengan ayam berbumbu khas, kuah kaldu gurih, dan taburan daun bawang segar.", price: "Rp 12.000", badge: "Favorit", image: "https://images.unsplash.com/photo-1644083152667-2c78739e882a?auto=format&fit=crop&w=900&q=80", imageAlt: "Semangkuk mie ayam dengan sayuran" },
   { cat: "andalan", name: "Mie Ayam Special", desc: "Versi spesial dengan potongan ayam lebih banyak, pangsit rebus, dan sambal khas.", price: "Rp 15.000", badge: "Best Seller", image: "https://images.unsplash.com/photo-1644083130607-b5ecc6cc7e8e?auto=format&fit=crop&w=900&q=80", imageAlt: "Mie ayam spesial dalam mangkuk" },
   { cat: "andalan", name: "Mie Ayam Bakso", desc: "Perpaduan sempurna mie ayam dengan bakso kenyal berukuran jumbo dan kuah segar.", price: "Rp 15.000", badge: "", image: "https://images.unsplash.com/photo-1687425973269-af0d62587769?auto=format&fit=crop&w=900&q=80", imageAlt: "Mie kuah dengan bakso" },
@@ -217,6 +224,63 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 renderMenu("semua");
 renderCart();
 
+// ── Data dari Supabase (menu & testimoni) ─────────────────────
+// Bila Supabase tidak terjangkau, daftar menu di atas tetap dipakai.
+function renderTestimonials(rows) {
+  const grid = document.querySelector(".testi-grid");
+  if (!grid || !rows.length) return;
+  grid.innerHTML = rows.map((t, i) => {
+    const rating = Math.min(5, Math.max(1, Number(t.rating) || 5));
+    const nama = String(t.nama || "");
+    return `
+        <div class="testi-card reveal${i === 1 ? " tc-featured" : ""}">
+          <div class="testi-stars">${"★".repeat(rating)}${"☆".repeat(5 - rating)}</div>
+          <p class="testi-text">"${escapeHtml(String(t.isi || ""))}"</p>
+          <div class="testi-author">
+            <div class="testi-avatar">${escapeHtml(nama.charAt(0).toUpperCase() || "?")}</div>
+            <div><strong>${escapeHtml(nama)}</strong><span>${escapeHtml(String(t.peran || "Pelanggan"))}</span></div>
+          </div>
+        </div>`;
+  }).join("");
+  observeReveal();
+}
+
+async function loadSupabaseData() {
+  if (!db) return;
+  try {
+    const text = v => String(v ?? "");
+    const { data: menuRows, error: menuError } = await db
+      .from("menu").select("*").eq("tersedia", true).order("urutan").order("nama");
+    if (!menuError && menuRows && menuRows.length && cart.length === 0) {
+      const urutanKategori = { Andalan: 0, Pelengkap: 1, Minuman: 2 };
+      menuRows.sort((a, b) =>
+        (urutanKategori[a.kategori] ?? 9) - (urutanKategori[b.kategori] ?? 9) || (a.urutan - b.urutan));
+      menuItems = menuRows.map(r => ({
+        id: r.id,
+        cat: text(r.kategori).toLowerCase(),
+        rawName: text(r.nama),
+        name: escapeHtml(text(r.nama)),
+        desc: escapeHtml(text(r.deskripsi)),
+        price: `Rp ${Number(r.harga || 0).toLocaleString("id-ID")}`,
+        badge: escapeHtml(text(r.badge)),
+        image: escapeHtml(text(r.image) || PLACEHOLDER_IMG),
+        imageAlt: escapeHtml(text(r.image_alt) || text(r.nama)),
+      }));
+      activeMenuOrder = null;
+      renderMenu(activeMenuCategory);
+      renderCart();
+    }
+
+    const { data: testiRows, error: testiError } = await db
+      .from("testimoni").select("nama,peran,rating,isi")
+      .order("created_at", { ascending: false }).limit(6);
+    if (!testiError && testiRows) renderTestimonials(testiRows);
+  } catch (err) {
+    console.error("Gagal memuat data dari Supabase:", err);
+  }
+}
+loadSupabaseData();
+
 document.getElementById("menuCheckout").addEventListener("click", () => {
   document.getElementById("pesan").scrollIntoView({ behavior: "smooth", block: "start" });
 });
@@ -279,8 +343,22 @@ document.querySelectorAll(".star-rating span").forEach(star => {
 const testiForm = document.getElementById("testiForm");
 const testiSuccess = document.getElementById("testiSuccess");
 if (testiForm) {
-  testiForm.addEventListener("submit", e => {
+  testiForm.addEventListener("submit", async e => {
     e.preventDefault();
+    if (!selectedRating) {
+      alert("Pilih rating bintang terlebih dahulu.");
+      return;
+    }
+    if (db) {
+      const nama = testiForm.querySelector('input[type="text"]').value.trim().slice(0, 60);
+      const isi = testiForm.querySelector("textarea").value.trim().slice(0, 600);
+      const { error } = await db.from("testimoni").insert({ nama, rating: selectedRating, isi, status: "Menunggu" });
+      if (error) {
+        console.error(error);
+        alert("Testimoni belum terkirim. Silakan coba lagi nanti.");
+        return;
+      }
+    }
     testiForm.style.display = "none";
     testiSuccess.style.display = "block";
     setTimeout(() => {
@@ -325,7 +403,7 @@ if (pesanForm) {
     const itemLines = cart.map(cartItem => {
       const item = menuItems[cartItem.menuIndex];
       const subtotal = getMenuPrice(item) * cartItem.quantity;
-      return `• ${item.name} × ${cartItem.quantity} — ${formatRupiah(subtotal)}` +
+      return `• ${item.rawName || item.name} × ${cartItem.quantity} — ${formatRupiah(subtotal)}` +
         (cartItem.note ? `\n  Catatan: ${cartItem.note}` : "");
     }).join("\n");
     const totalPrice = cart.reduce((total, cartItem) => {
@@ -342,6 +420,17 @@ if (pesanForm) {
       (catatan ? `• Catatan: ${catatan}\n` : "") +
       `\nNo. WA: ${wa}\n\nTerima kasih! 🙏`
     );
+
+    if (db) {
+      const orderItems = cart.map(cartItem => {
+        const item = menuItems[cartItem.menuIndex];
+        return { id: item.id || null, nama: item.rawName || item.name, harga: getMenuPrice(item), qty: cartItem.quantity, catatan: cartItem.note || "" };
+      });
+      db.from("orders").insert({
+        nama: nama.trim().slice(0, 60), wa: wa.trim(), tipe: jenis, catatan: catatan.trim(),
+        items: orderItems, total: totalPrice, status: "Baru", sumber: "web",
+      }).then(({ error }) => { if (error) console.error("Pesanan gagal disimpan:", error); });
+    }
 
     window.open(`https://wa.me/6283106414823?text=${msg}`, "_blank");
 
